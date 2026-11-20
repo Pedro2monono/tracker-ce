@@ -381,6 +381,14 @@ class cPatternEditor : public ModuleBase
     uint8_t matrixDefaultInstr = 0;    // instrument used when a pad turns a trig on
     int16_t matrixLastPlayheadPad = -1;
     int16_t matrixLastPlayStep = -1;
+    bool matrixFollow = false;         // page follows the playhead (Shift + page pad)
+    uint64_t matrixHeldMask = 0;       // step pads currently held (bit = pad index)
+    uint64_t matrixCreatedMask = 0;    // held pads that turned a trig on at press
+    bool matrixHeldEdited = false;     // encoder turned while step pads were held
+    void matrixEncoder(int16_t value);
+    void matrixPreview(uint8_t track, uint16_t stepIdx);
+    void matrixSetStepOn(Sequencer::strPattern::strTrack::strStep* step, uint16_t stepIdx);
+    void matrixSetStepOff(Sequencer::strPattern::strTrack::strStep* step, uint16_t stepIdx);
     bool matrixPatternBtnConsumed = false;
     // stash of the note/instrument removed by a pad, restored on the next "on"
     int8_t matrixStashNote[Sequencer::MAXSTEP + 1];
