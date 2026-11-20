@@ -372,6 +372,26 @@ class cPatternEditor : public ModuleBase
     uint8_t lastTitleBarFx = 0xFF;
     uint8_t lastTitleBarParam = 0xFF;
     char rightTitleBarLabel[40];
+
+    //--------------------------------------------------------
+    // MATRIX PROTOTYPE (throwaway) - pads 8x4 = trigs of the selected track
+    bool matrixMode = false;
+    uint8_t matrixPage = 0;            // 0..3 -> steps 0-31, 32-63, 64-95, 96-127
+    int8_t matrixDefaultNote = 60;     // note used when a pad turns a trig on
+    uint8_t matrixDefaultInstr = 0;    // instrument used when a pad turns a trig on
+    int16_t matrixLastPlayheadPad = -1;
+    bool matrixPatternBtnConsumed = false;
+    // stash of the note/instrument removed by a pad, restored on the next "on"
+    int8_t matrixStashNote[Sequencer::MAXSTEP + 1];
+    uint8_t matrixStashInstr[Sequencer::MAXSTEP + 1];
+    int16_t matrixStashTrack = -1;
+    int16_t matrixStashPattern = -1;
+
+    void matrixEnter();
+    void matrixExit();
+    void matrixPadEvent(uint8_t pad, uint8_t state);
+    void matrixLightUp();
+    void matrixValidateStash();
 };
 
 extern cPatternEditor patternEditor;

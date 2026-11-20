@@ -252,6 +252,12 @@ void cPatternEditor::update()
 
     if (sequencer.isStop())
     {
+        // MATRIX PROTOTYPE: remove the playhead LED once the transport stops
+        if (matrixMode && matrixLastPlayheadPad >= 0)
+        {
+            lightUpPadBoard();
+        }
+
         // jesli ostatnio bylo odtwarzane zaznaczenie to cofnij playhed na 0
         if (trackerPattern.playheadStartTrack > 0 || trackerPattern.playheadEndTrack < 7)
         {
@@ -380,6 +386,8 @@ void cPatternEditor::stop()
     {
         fillState = 0;
     }
+
+    matrixMode = false; // MATRIX PROTOTYPE: leaving the module leaves the sub-mode
 
     padsBacklight.clearGlobalPads(1, 1, 1);
 
@@ -2862,6 +2870,23 @@ static void functFx2(uint8_t state)
 
 static void functPattern(uint8_t state)
 {
+    // MATRIX PROTOTYPE: Shift + Pattern toggles the matrix sub-mode
+    if (state == buttonPress && PTE->buttons->isButtonPressed(interfaceButtonShift) &&
+        PTE->fillState == 0 && PTE->selectedPlace < 0 && !PTE->keyboardManager.getState())
+    {
+        PTE->matrixPatternBtnConsumed = true;
+        if (PTE->matrixMode)
+            PTE->matrixExit();
+        else
+            PTE->matrixEnter();
+        return;
+    }
+    if (state == buttonRelease && PTE->matrixPatternBtnConsumed)
+    {
+        PTE->matrixPatternBtnConsumed = false;
+        return;
+    }
+
     if (state == buttonPress)
     {
         if (PTE->fillState == 1)
@@ -4238,6 +4263,12 @@ void cPatternEditor::lightUpPadBoard()
 
     //--------------------------------------------
 
+    if (matrixMode)
+    {
+        matrixLightUp();
+        return;
+    }
+
     if (editMode > 0 || sequencer.isRec())
     {
         Sequencer::strPattern* seq = sequencer.getPatternToUI();
@@ -4635,6 +4666,13 @@ static void functPads(uint8_t pad, uint8_t state, int16_t velo)
 
         PTE->lightUpPadBoard();
 
+        return;
+    }
+
+    // MATRIX PROTOTYPE: pads are owned by the matrix sub-mode
+    if (PTE->matrixMode)
+    {
+        PTE->matrixPadEvent(pad, state);
         return;
     }
 
@@ -5290,5 +5328,214 @@ static void functMenu(uint8_t state)
     else if (state == buttonRelease)
     {
         mtMenuPopup.hideModulePopup(PTE);
+    }
+}
+
+// ##############################################################################################
+// ###############################   MATRIX PROTOTYPE (throwaway)   #############################
+// ##############################################################################################
+// Shift + Pattern: enter / leave. Pads: 12 columns x 4 rows, pad = row * 12 + col.
+// Columns 0-7 = 32 steps of the current page of the selected track.
+// Row 0, columns 8-11 = pages 1-4. Other function pads are unused.
+// A pad turns a trig on or off by writing only step.note (and step.instrument when it turns
+// the trig on). fx[0], fx[1], volume and micromove are never touched.
+
+static constexpr uint8_t kMatrixCols = 12;
+static constexpr uint8_t kMatrixStepCols = 8;
+static constexpr uint8_t kMatrixRows = 4;
+static constexpr uint8_t kMatrixStepsPerPage = kMatrixStepCols * kMatrixRows; // 32
+static constexpr uint8_t kMatrixPages = 4;
+
+void cPatternEditor::matrixValidateStash()
+{
+    int16_t track = trackerPattern.actualTrack;
+    int16_t pattern = mtProject.values.actualPattern;
+    if (track == matrixStashTrack && pattern == matrixStashPattern)
+        return;
+
+    for (int i = 0; i <= Sequencer::MAXSTEP; i++)
+    {
+        matrixStashNote[i] = Sequencer::STEP_NOTE_EMPTY;
+        matrixStashInstr[i] = 0;
+    }
+    matrixStashTrack = track;
+    matrixStashPattern = pattern;
+
+    // P-08 (simplified): default note/instrument = step under the cursor if it has a note,
+    // otherwise the last step of the track that has one, otherwise native defaults.
+    Sequencer::strPattern* pat = sequencer.getPatternToUI();
+    Sequencer::strPattern::strTrack* tr = &pat->track[track];
+    int16_t src = -1;
+    if (trackerPattern.actualStep >= 0 && trackerPattern.actualStep <= Sequencer::MAXSTEP &&
+        tr->step[trackerPattern.actualStep].note >= 0)
+    {
+        src = trackerPattern.actualStep;
+    }
+    else
+    {
+        for (int s = tr->length; s >= 0; s--)
+        {
+            if (tr->step[s].note >= 0)
+            {
+                src = s;
+                break;
+            }
+        }
+    }
+
+    if (src >= 0)
+    {
+        matrixDefaultNote = tr->step[src].note;
+        matrixDefaultInstr = tr->step[src].instrument;
+    }
+    else
+    {
+        matrixDefaultNote = Sequencer::STEP_NOTE_DEFAULT;
+        matrixDefaultInstr = sequencer.changeInstrumentInSpecificOrder(
+          mtProject.values.lastUsedInstrument, 0, !isSampleTrack(track));
+    }
+}
+
+void cPatternEditor::matrixEnter()
+{
+    cancelPopups();
+    matrixMode = true;
+    matrixStashTrack = -1; // force a fresh stash and default note
+    matrixValidateStash();
+    int16_t step = trackerPattern.actualStep;
+    matrixPage = (step >= 0) ? (step / kMatrixStepsPerPage) % kMatrixPages : 0;
+    matrixLastPlayheadPad = -1;
+    lightUpPadBoard();
+}
+
+void cPatternEditor::matrixExit()
+{
+    matrixMode = false;
+    matrixLastPlayheadPad = -1;
+    padsBacklight.clearGlobalPads(1, 1, 0);
+    lightUpPadBoard();
+}
+
+void cPatternEditor::matrixPadEvent(uint8_t pad, uint8_t state)
+{
+    if (state != buttonPress)
+        return; // release and hold are ignored in the prototype
+
+    uint8_t row = pad / kMatrixCols;
+    uint8_t col = pad % kMatrixCols;
+    if (row >= kMatrixRows)
+        return;
+
+    if (col >= kMatrixStepCols)
+    {
+        if (row == 0)
+        {
+            matrixPage = col - kMatrixStepCols;
+            matrixLightUp();
+        }
+        return;
+    }
+
+    matrixValidateStash();
+
+    uint8_t track = trackerPattern.actualTrack;
+    uint16_t stepIdx = matrixPage * kMatrixStepsPerPage + row * kMatrixStepCols + col;
+    Sequencer::strPattern* pat = sequencer.getPatternToUI();
+    if (stepIdx > pat->track[track].length || stepIdx > Sequencer::MAXSTEP)
+        return; // outside the track length
+
+    Sequencer::strPattern::strTrack::strStep* step = &pat->track[track].step[stepIdx];
+
+    newFileManager.storePatternUndoRevision();
+
+    if (step->note >= 0)
+    {
+        // OFF: keep the note aside, leave fx[0], fx[1], volume, micromove, instrument untouched
+        matrixStashNote[stepIdx] = step->note;
+        matrixStashInstr[stepIdx] = step->instrument;
+        step->note = Sequencer::STEP_NOTE_EMPTY;
+    }
+    else
+    {
+        // ON: restore what this pad removed, otherwise use the default note/instrument.
+        // A note-off step (-2..-4) is overwritten by a note in this prototype.
+        if (matrixStashNote[stepIdx] >= 0)
+        {
+            step->note = matrixStashNote[stepIdx];
+            step->instrument = matrixStashInstr[stepIdx];
+            matrixStashNote[stepIdx] = Sequencer::STEP_NOTE_EMPTY;
+        }
+        else
+        {
+            step->note = matrixDefaultNote;
+            step->instrument = matrixDefaultInstr;
+        }
+    }
+
+    newFileManager.setActualPatternStructChanged();
+    // no playSelection(): no preview in the prototype (open question)
+
+    trackerPattern.actualStep = stepIdx; // screen cursor follows the edited step
+    refreshPattern();
+    matrixLightUp();
+}
+
+void cPatternEditor::matrixLightUp()
+{
+    padsBacklight.clearGlobalPads(1, 1, 0);
+
+    uint8_t track = trackerPattern.actualTrack;
+    Sequencer::strPattern* pat = sequencer.getPatternToUI();
+    Sequencer::strPattern::strTrack* tr = &pat->track[track];
+
+    int16_t playStep = -1;
+    if (!sequencer.isStop())
+    {
+        playStep = sequencer.ptrPlayer->track[track].actual_pos;
+    }
+    matrixLastPlayheadPad = -1;
+
+    for (uint8_t row = 0; row < kMatrixRows; row++)
+    {
+        for (uint8_t col = 0; col < kMatrixStepCols; col++)
+        {
+            uint8_t pad = row * kMatrixCols + col;
+            uint16_t stepIdx = matrixPage * kMatrixStepsPerPage + row * kMatrixStepCols + col;
+            if (stepIdx > tr->length)
+                continue; // outside length: dark
+
+            bool isTrig = tr->step[stepIdx].note >= 0;
+            bool isPlayhead = (playStep == (int16_t)stepIdx);
+
+            if (isPlayhead)
+            {
+                // playhead = inverted pad: a trig goes dark, an empty step lights up.
+                // (native blink is 500 ms, too slow for a moving playhead)
+                matrixLastPlayheadPad = pad;
+                if (!isTrig)
+                    padsBacklight.setBackLayer(1, mtConfig.values.padsLightFront, pad);
+                continue;
+            }
+
+            if (isTrig)
+            {
+                padsBacklight.setBackLayer(1, mtConfig.values.padsLightFront, pad); // trig
+            }
+            else if (tr->step[stepIdx].hasAnyFx())
+            {
+                padsBacklight.setBackLayer(1, mtConfig.values.padsLightBackDim, pad); // P-Lock only
+            }
+        }
+    }
+
+    // page pads: row 0, columns 8-11
+    for (uint8_t p = 0; p < kMatrixPages; p++)
+    {
+        uint8_t pad = kMatrixStepCols + p;
+        bool pageExists = (p * kMatrixStepsPerPage) <= tr->length;
+        if (p == matrixPage)
+            padsBacklight.setBackLayer(1, mtConfig.values.padsLightFront, pad);
+        else if (pageExists)
+            padsBacklight.setBackLayer(1, mtConfig.values.padsLightBackDim, pad);
     }
 }
