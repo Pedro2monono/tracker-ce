@@ -271,6 +271,13 @@ void cPatternEditor::update()
 
     showLength();
 
+    // MATRIX PROTOTYPE: the pads follow the playhead even when it is off screen
+    if (matrixMode &&
+        sequencer.ptrPlayer->track[trackerPattern.actualTrack].actual_pos != matrixLastPlayStep)
+    {
+        matrixLightUp();
+    }
+
     if (!refreshPlayheadOnScreen() && editMode)
     {
         return;
@@ -4162,6 +4169,8 @@ static void functUndoRedo(uint8_t state, bool undo)
         PTE->refreshPattern();
         PTE->showPattern();
         PTE->showLength();
+        if (PTE->matrixMode)
+            PTE->lightUpPadBoard(); // MATRIX PROTOTYPE: pads show the restored pattern
     }
 }
 
@@ -4181,6 +4190,8 @@ static void functUndoRedoOnLeftRight(int8_t dir)
     PTE->refreshPattern();
     PTE->showPattern();
     PTE->showLength();
+    if (PTE->matrixMode)
+        PTE->lightUpPadBoard(); // MATRIX PROTOTYPE: pads show the restored pattern
 }
 
 // ##############################################################################################
@@ -5493,6 +5504,7 @@ void cPatternEditor::matrixLightUp()
     {
         playStep = sequencer.ptrPlayer->track[track].actual_pos;
     }
+    matrixLastPlayStep = playStep;
     matrixLastPlayheadPad = -1;
 
     for (uint8_t row = 0; row < kMatrixRows; row++)

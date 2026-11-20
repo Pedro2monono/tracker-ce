@@ -380,6 +380,7 @@ class cPatternEditor : public ModuleBase
     int8_t matrixDefaultNote = 60;     // note used when a pad turns a trig on
     uint8_t matrixDefaultInstr = 0;    // instrument used when a pad turns a trig on
     int16_t matrixLastPlayheadPad = -1;
+    int16_t matrixLastPlayStep = -1;
     bool matrixPatternBtnConsumed = false;
     // stash of the note/instrument removed by a pad, restored on the next "on"
     int8_t matrixStashNote[Sequencer::MAXSTEP + 1];
